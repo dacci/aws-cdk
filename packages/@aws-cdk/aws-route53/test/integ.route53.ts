@@ -1,4 +1,6 @@
 import * as ec2 from '@aws-cdk/aws-ec2';
+import * as iam from '@aws-cdk/aws-iam';
+import * as kms from '@aws-cdk/aws-kms';
 import * as cdk from '@aws-cdk/core';
 import { ARecord, CaaAmazonRecord, CnameRecord, PrivateHostedZone, PublicHostedZone, RecordTarget, TxtRecord } from '../lib';
 
@@ -12,8 +14,18 @@ const privateZone = new PrivateHostedZone(stack, 'PrivateZone', {
   zoneName: 'cdk.local', vpc,
 });
 
+const key = new kms.Key(stack, 'Key', {
+  keySpec: kms.KeySpec.ECC_NIST_P256,
+  keyUsage: kms.KeyUsage.SIGN_VERIFY,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+});
+key.grant(new iam.AccountRootPrincipal(), 'kms:Sign');
+
 const publicZone = new PublicHostedZone(stack, 'PublicZone', {
   zoneName: 'cdk.test',
+  keySigningKeys: {
+    Default: { masterKey: key },
+  },
 });
 const publicSubZone = new PublicHostedZone(stack, 'PublicSubZone', {
   zoneName: 'sub.cdk.test',

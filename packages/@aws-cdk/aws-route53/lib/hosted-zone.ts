@@ -1,12 +1,13 @@
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
+import * as kms from '@aws-cdk/aws-kms';
 import * as cxschema from '@aws-cdk/cloud-assembly-schema';
 import { ContextProvider, Duration, Lazy, Resource, Stack } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { HostedZoneProviderProps } from './hosted-zone-provider';
 import { HostedZoneAttributes, IHostedZone } from './hosted-zone-ref';
 import { CaaAmazonRecord, ZoneDelegationRecord } from './record-set';
-import { CfnHostedZone } from './route53.generated';
+import { CfnDNSSEC, CfnHostedZone, CfnKeySigningKey } from './route53.generated';
 import { makeHostedZoneArn, validateZoneName } from './util';
 
 /**
@@ -181,6 +182,27 @@ export class HostedZone extends Resource implements IHostedZone {
 }
 
 /**
+ * Properties to create DNSSEC key signing keys
+ */
+export interface KeySigningKeyOptions {
+  /**
+   * The customer managed CMK to be used for signing. This key must be an asymmetric CMK with
+   * an ECC_NIST_P256 key spec, and must be in the US East (N. Virginia) region.
+   *
+   * The CMK must be unique for each key-signing key (KSK) in a single hosted zone.
+   */
+  readonly masterKey: kms.IKey;
+
+  /**
+   * Indicates whether the key is being used for signing. To enable DNSSEC signing,
+   * at least 1 key must be active.
+   *
+   * @default true
+   */
+  readonly active?: boolean;
+}
+
+/**
  * Construction properties for a PublicHostedZone.
  */
 export interface PublicHostedZoneProps extends CommonHostedZoneProps {
@@ -205,6 +227,13 @@ export interface PublicHostedZoneProps extends CommonHostedZoneProps {
    * @default - A role name is generated automatically
    */
   readonly crossAccountZoneDelegationRoleName?: string;
+
+  /**
+   * Key signing keys to be used for DNSSEC.
+   *
+   * @default - No key signing keys
+   */
+  readonly keySigningKeys?: Record<string, KeySigningKeyOptions>;
 }
 
 /**
@@ -275,6 +304,50 @@ export class PublicHostedZone extends HostedZone implements IPublicHostedZone {
         },
       });
     }
+
+    if (props.keySigningKeys) {
+      if (Object.keys(props.keySigningKeys).length > 2) {
+        throw new Error('At most 2 key signing keys can be created.');
+      }
+
+      const keySigningKeys = Object.entries(props.keySigningKeys)
+        .map(([name, opts]) => this.createKeySigningKey(name, opts));
+
+      const activeKSKs = keySigningKeys.filter(ksk => ksk.status === 'ACTIVE');
+      if (activeKSKs.length) {
+        const dnssec = new CfnDNSSEC(this, 'DNSSEC', {
+          hostedZoneId: this.hostedZoneId,
+        });
+        activeKSKs.forEach(ksk => dnssec.addDependsOn(ksk));
+      }
+    }
+  }
+
+  private createKeySigningKey(name: string, opts: KeySigningKeyOptions): CfnKeySigningKey {
+    if (name.length < 3) {
+      throw new Error('Key signing key name must be at least 3 characters.');
+    }
+    if (name.length > 128) {
+      throw new Error('Key signing key name must not be longer than 128 characters.');
+    }
+    if (/[^0-9A-Za-z_]/.test(name)) {
+      throw new Error('Key signing key name can contain only numbers, letters and underscores (_).');
+    }
+
+    const principal = new iam.ServicePrincipal('dnssec-route53.amazonaws.com');
+    opts.masterKey.grant(principal, 'kms:DescribeKey', 'kms:GetPublicKey', 'kms:Sign');
+    opts.masterKey.grant(principal.withConditions({
+      Bool: {
+        'kms:GrantIsForAWSResource': true,
+      },
+    }), 'kms:CreateGrant');
+
+    return new CfnKeySigningKey(this, `${name}KeySigningKey`, {
+      hostedZoneId: this.hostedZoneId,
+      keyManagementServiceArn: opts.masterKey.keyArn,
+      name,
+      status: (opts.active ?? true) ? 'ACTIVE' : 'INACTIVE',
+    });
   }
 
   public addVpc(_vpc: ec2.IVpc) {

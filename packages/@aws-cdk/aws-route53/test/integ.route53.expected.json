@@ -227,11 +227,123 @@
         "TTL": "60"
       }
     },
+    "Key961B73FD": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "KeyPolicy": {
+          "Statement": [
+            {
+              "Action": "kms:*",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition"
+                      },
+                      ":iam::",
+                      {
+                        "Ref": "AWS::AccountId"
+                      },
+                      ":root"
+                    ]
+                  ]
+                }
+              },
+              "Resource": "*"
+            },
+            {
+              "Action": "kms:Sign",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition"
+                      },
+                      ":iam::",
+                      {
+                        "Ref": "AWS::AccountId"
+                      },
+                      ":root"
+                    ]
+                  ]
+                }
+              },
+              "Resource": "*"
+            },
+            {
+              "Action": [
+                "kms:DescribeKey",
+                "kms:GetPublicKey",
+                "kms:Sign"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "dnssec-route53.amazonaws.com"
+              },
+              "Resource": "*"
+            },
+            {
+              "Action": "kms:CreateGrant",
+              "Condition": {
+                "Bool": {
+                  "kms:GrantIsForAWSResource": true
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "dnssec-route53.amazonaws.com"
+              },
+              "Resource": "*"
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "KeySpec": "ECC_NIST_P256",
+        "KeyUsage": "SIGN_VERIFY"
+      },
+      "UpdateReplacePolicy": "Delete",
+      "DeletionPolicy": "Delete"
+    },
     "PublicZone2E1C4E34": {
       "Type": "AWS::Route53::HostedZone",
       "Properties": {
         "Name": "cdk.test."
       }
+    },
+    "PublicZoneDefaultKeySigningKeyEF3BF745": {
+      "Type": "AWS::Route53::KeySigningKey",
+      "Properties": {
+        "HostedZoneId": {
+          "Ref": "PublicZone2E1C4E34"
+        },
+        "KeyManagementServiceArn": {
+          "Fn::GetAtt": [
+            "Key961B73FD",
+            "Arn"
+          ]
+        },
+        "Name": "Default",
+        "Status": "ACTIVE"
+      }
+    },
+    "PublicZoneDNSSEC74FA7D1E": {
+      "Type": "AWS::Route53::DNSSEC",
+      "Properties": {
+        "HostedZoneId": {
+          "Ref": "PublicZone2E1C4E34"
+        }
+      },
+      "DependsOn": [
+        "PublicZoneDefaultKeySigningKeyEF3BF745"
+      ]
     },
     "PublicZonecdktestsubcdktest83558650": {
       "Type": "AWS::Route53::RecordSet",
